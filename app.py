@@ -1,23 +1,23 @@
-import requests
-from bs4 import BeautifulSoup
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import os
 import pandas as pd
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import re
-import json
 import gradio as gr
-import torch
-import os
+import json
 
-# Configuration
-MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"  # Good balance of speed and performance
+app = Flask(__name__)
+CORS(app)  # Enable CORS for cross-origin requests
 
 class SHLAssessmentRAG:
     def __init__(self):
-        self.model = SentenceTransformer(MODEL_NAME)
+        # Use TF-IDF vectorizer instead of Sentence Transformers
+        self.vectorizer = TfidfVectorizer(stop_words='english')
         self.assessments_df = None
-        self.assessment_embeddings = None
+        self.assessment_vectors = None
         self.initialize_data()
     
     def initialize_data(self):
@@ -25,20 +25,22 @@ class SHLAssessmentRAG:
         print("Loading SHL assessment data...")
         self.assessments_df = self.load_assessment_data()
         
-        # Create embeddings for each assessment
-        print("Creating embeddings for assessments...")
+        # Create text representations for each assessment
         assessment_texts = [
             f"{row['Assessment Name']} {row['Description']} {row['Test Type']} {row['Competencies']} {row['Job Levels']}"
             for _, row in self.assessments_df.iterrows()
         ]
-        self.assessment_embeddings = self.model.encode(assessment_texts)
+        
+        # Create TF-IDF vectors
+        self.assessment_vectors = self.vectorizer.fit_transform(assessment_texts)
         print(f"Loaded {len(self.assessments_df)} assessments")
     
     def load_assessment_data(self):
         """
-        Load the assessment data from the provided sample
+        Load assessment data from file
+        In a production environment, you might fetch this from a database
         """
-        # Sample data to demonstrate the approach
+        # Sample data for demonstration
         sample_data = [
             {
                 "Assessment Name": "Verify Interactive - Java",
@@ -162,39 +164,6 @@ class SHLAssessmentRAG:
                 "Job Levels": "All Levels, Analysts",
             },
             {
-                "Assessment Name": "Remote Collaboration Assessment",
-                "URL": "https://www.shl.com/solutions/products/remote-collaboration-assessment/",
-                "Remote Testing Support": "Yes",
-                "Adaptive/IRT Support": "No",
-                "Duration": "30 minutes",
-                "Test Type": "Behavioral",
-                "Description": "Assesses ability to collaborate effectively in remote work environments",
-                "Competencies": "Communication, Teamwork, Self-management, Virtual Collaboration",
-                "Job Levels": "All Levels",
-            },
-            {
-                "Assessment Name": "Technical Aptitude Battery",
-                "URL": "https://www.shl.com/solutions/products/technical-aptitude/",
-                "Remote Testing Support": "Yes",
-                "Adaptive/IRT Support": "Yes",
-                "Duration": "35 minutes",
-                "Test Type": "Cognitive",
-                "Description": "Evaluates aptitude for technical roles including spatial reasoning and technical understanding",
-                "Competencies": "Technical Reasoning, Spatial Ability, Mechanical Comprehension",
-                "Job Levels": "Technical Roles, Engineers",
-            },
-            {
-                "Assessment Name": "Leadership Assessment",
-                "URL": "https://www.shl.com/solutions/products/leadership-assessment/",
-                "Remote Testing Support": "Yes",
-                "Adaptive/IRT Support": "No",
-                "Duration": "40 minutes",
-                "Test Type": "Personality, Behavioral",
-                "Description": "Comprehensive assessment of leadership potential and capabilities",
-                "Competencies": "Strategic Thinking, Team Management, Decision Making, Vision",
-                "Job Levels": "Managers, Directors, Executives",
-            },
-            {
                 "Assessment Name": "Data Analyst Assessment",
                 "URL": "https://www.shl.com/solutions/products/data-analyst-assessment/",
                 "Remote Testing Support": "Yes",
@@ -225,11 +194,11 @@ class SHLAssessmentRAG:
             if time_match:
                 time_limit = int(time_match.group(1))
         
-        # Create query embedding
-        query_embedding = self.model.encode([query])
+        # Create query vector using the same TF-IDF vectorizer
+        query_vector = self.vectorizer.transform([query])
         
         # Calculate similarity scores
-        similarity_scores = cosine_similarity(query_embedding, self.assessment_embeddings)[0]
+        similarity_scores = cosine_similarity(query_vector, self.assessment_vectors)[0]
         
         # Create a copy of the DataFrame with similarity scores
         results_df = self.assessments_df.copy()
@@ -262,71 +231,116 @@ class SHLAssessmentRAG:
         
         return recommendations
 
-# Initialize the model only once
-rag_model = SHLAssessmentRAG()
-
-def api_recommend(query, time_limit=None):
-    """API function to get recommendations"""
-    if time_limit and str(time_limit).strip():
-        try:
-            time_limit = int(time_limit)
-        except ValueError:
-            return {"error": "Please enter a valid number for time limit"}
-    else:
-        time_limit = None
-        
-    recommendations = rag_model.get_recommendations(query, time_limit=time_limit)
-    return recommendations
-
-# Gradio UI Implementation
+# For Gradio UI
 def create_gradio_interface():
-    def gradio_recommend(query, time_limit=None):
-        """Gradio wrapper for recommend function"""
-        result = api_recommend(query, time_limit)
-        if "error" in result:
-            return result["error"]
-        return pd.DataFrame(result)
+    # Initialize the RAG model
+    rag_model = SHLAssessmentRAG()
     
-    with gr.Blocks(title="SHL Assessment Recommender") as interface:
-        gr.Markdown("# SHL Assessment Recommendation System")
-        gr.Markdown("Enter a job description or query to get assessment recommendations.")
+    def recommend(query, time_limit_str=None):
+        # Process time limit if provided
+        time_limit = None
+        if time_limit_str and time_limit_str.strip():
+            try:
+                time_limit = int(time_limit_str)
+            except ValueError:
+                return "Please enter a valid number for time limit"
         
-        with gr.Row():
-            with gr.Column(scale=3):
-                query_input = gr.Textbox(label="Job Description or Query", lines=5, 
-                                        placeholder="Enter job description or specific requirements...")
-                time_limit = gr.Textbox(label="Time Limit (minutes, optional)", placeholder="e.g., 45")
-                submit_btn = gr.Button("Get Recommendations")
+        # Get recommendations
+        recommendations = rag_model.get_recommendations(query, max_results=10, time_limit=time_limit)
         
-        output = gr.Dataframe(label="Recommended Assessments")
+        # Format as a nicely formatted table for display
+        if not recommendations:
+            return "No matching assessments found."
         
-        gr.Markdown("### API Usage")
-        gr.Markdown("""
-        You can also use this as an API:
-        
-        **GET** `/api/recommend?query=YOUR_QUERY&time_limit=OPTIONAL_TIME_LIMIT`
-        
-        Example: `/api/recommend?query=Java developer with OOP skills&time_limit=30`
-        """)
-        
-        submit_btn.click(fn=gradio_recommend, inputs=[query_input, time_limit], outputs=output)
+        # Convert to Gradio-friendly format (DataFrame)
+        df = pd.DataFrame(recommendations)
+        return df
     
+    # Create Gradio interface
+    interface = gr.Interface(
+        fn=recommend,
+        inputs=[
+            gr.Textbox(
+                label="Job Description or Query",
+                placeholder="Enter job description or requirements...",
+                lines=5
+            ),
+            gr.Textbox(
+                label="Time Limit (minutes, optional)",
+                placeholder="e.g., 45"
+            )
+        ],
+        outputs=gr.Dataframe(),
+        title="SHL Assessment Recommendation System",
+        description="Enter a job description or query to get relevant SHL assessment recommendations.",
+        examples=[
+            ["I am hiring for Java developers who can also collaborate effectively with my business teams. Looking for an assessment that can be completed in 40 minutes."],
+            ["Looking to hire mid-level professionals who are proficient in Python, SQL and JavaScript. Need an assessment package that can test all skills with max duration of 60 minutes."],
+            ["Need to find people with strong leadership skills and decision-making abilities. The assessment should take less than 30 minutes."],
+            ["Looking for a data analyst assessment that tests SQL knowledge and analytical thinking, under 45 minutes"]
+        ]
+    )
     return interface
 
-# API endpoint for recommend
-def predict(query, time_limit=None):
-    return api_recommend(query, time_limit)
+# For Flask API
+rag_model = SHLAssessmentRAG()
 
-# Create the interface and expose the API
-interface = create_gradio_interface()
-app = gr.mount_gradio_app(app=None, blocks=interface, path="/")
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "message": "SHL Assessment Recommendation API",
+        "usage": "Send GET requests to /api/recommend?query=your job description"
+    })
 
-# Add the API endpoint
-@app.get("/api/recommend")
-def recommend_api(query: str, time_limit: str = None):
-    """API endpoint for recommendations"""
-    return api_recommend(query, time_limit)
+@app.route('/api/recommend', methods=['GET'])
+def api_recommend():
+    """
+    Endpoint to get assessment recommendations based on a query
+    Query parameters:
+    - query: Job description or requirements text
+    - time_limit: Optional time limit in minutes
+    - max_results: Optional maximum number of results (default 10)
+    """
+    query = request.args.get('query', '')
+    
+    if not query:
+        return jsonify({"error": "Missing 'query' parameter"}), 400
+    
+    # Parse optional parameters
+    try:
+        time_limit = request.args.get('time_limit')
+        if time_limit:
+            time_limit = int(time_limit)
+            
+        max_results = request.args.get('max_results', '10')
+        max_results = int(max_results)
+    except ValueError:
+        return jsonify({"error": "Invalid parameter value"}), 400
+    
+    # Get recommendations
+    recommendations = rag_model.get_recommendations(query, max_results=max_results, time_limit=time_limit)
+    
+    # Return JSON response
+    return jsonify({
+        "query": query,
+        "time_limit": time_limit,
+        "recommendations": recommendations
+    })
 
-if __name__ == "__main__":
-    # For local testing only
+# Main function to decide which interface to use
+def main():
+    # For Hugging Face Spaces, use Gradio
+    interface = create_gradio_interface()
     interface.launch()
+
+# Entry point
+if __name__ == "__main__":
+    # Choose which interface to use based on environment
+    # Check if running on Hugging Face Spaces
+    if os.environ.get('SPACE_ID'):
+        main()  # Run Gradio interface
+    else:
+        # Get port from environment variable or use default
+        port = int(os.environ.get("PORT", 5000))
+        # Run the Flask application
+        app.run(host="0.0.0.0", port=port)
