@@ -1,32 +1,42 @@
-# SHL Assessment Recommender
+# SHL Assessment Recommendation System
 
-This application uses semantic search to recommend appropriate SHL assessments based on job descriptions or specific requirements.
+The **SHL Assessment Recommendation System** is a smart and lightweight web application that helps recruiters and HR professionals find the most suitable SHL assessments based on job roles, skills, and other hiring needs. Built using Python, Gradio, and TF-IDF, this tool uses semantic search to recommend assessments from a structured dataset.
 
-## Features
+---
 
-- **Semantic Search**: Uses sentence embeddings to find the most relevant assessments
-- **Time-Based Filtering**: Option to filter assessments by duration
-- **Web UI**: Interactive Gradio interface for easy use
-- **API Access**: REST API for programmatic access
+## 🚀 Features
 
-## API Usage
+- 🔍 **Natural Language Input:** Just type what you need — the system understands queries like “Need a test for data analysis role” or “Looking for a 30-minute communication skill test.”
+- 🤖 **TF-IDF Matching:** Uses TF-IDF vectorization and cosine similarity to match your input with the best-fit assessments.
+- 💻 **Gradio Interface:** Simple, user-friendly web interface powered by Gradio.
+- ⚡ **Fast & Lightweight:** No heavy models; runs efficiently on local systems or Hugging Face Spaces.
+- 📊 **Real-World Dataset:** Works with a CSV of SHL assessment descriptions.
 
-The application provides a REST API endpoint for recommendations:
+---
 
-```
-GET /api/recommend?query=YOUR_QUERY&time_limit=OPTIONAL_TIME_LIMIT
-```
+## 🧠 How It Works
 
-### Parameters:
-- `query`: Job description or requirements (required)
-- `time_limit`: Maximum assessment duration in minutes (optional)
+1. Loads a dataset of SHL assessments from a CSV file.
+2. Vectorizes each assessment description using **TF-IDF Vectorizer**.
+3. Takes user query and vectorizes it the same way.
+4. Computes **cosine similarity** between query vector and each assessment.
+5. Ranks and returns top 5 matches with details like name, description, duration, and number of questions.
 
-### Example:
-```
-GET /api/recommend?query=Java developer with OOP skills&time_limit=30
-```
+---
 
-### Response:
+
+### 🔸 Parameters
+
+| Name         | Type   | Description                                      | Required |
+|--------------|--------|--------------------------------------------------|----------|
+| `query`      | string | Job description, skills, or keywords             | ✅ Yes   |
+| `time_limit` | int    | Maximum allowed assessment duration in minutes   | ❌ No    |
+
+### ✅ Example
+
+
+### 📥 Sample Response
+
 ```json
 [
   {
@@ -40,15 +50,5 @@ GET /api/recommend?query=Java developer with OOP skills&time_limit=30
   },
   ...
 ]
-```
 
-## Web Interface
 
-The application also provides a user-friendly web interface where you can:
-1. Enter a job description
-2. Specify time constraints (optional)
-3. View a table of recommended assessments
-
-## Deployment
-
-This application is configured to be deployed on Hugging Face Spaces.
